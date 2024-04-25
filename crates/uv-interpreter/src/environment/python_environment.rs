@@ -20,7 +20,7 @@ pub struct PythonEnvironment {
 impl PythonEnvironment {
     /// Create a [`PythonEnvironment`] for an existing virtual environment.
     pub fn from_virtualenv(cache: &Cache) -> Result<Self, Error> {
-        let Some(venv) = detect_virtual_env()? else {
+        let Some(venv) = detect_virtualenv()? else {
             return Err(Error::VenvNotFound);
         };
         let venv = fs_err::canonicalize(venv)?;
@@ -134,7 +134,18 @@ impl PythonEnvironment {
 }
 
 /// Locate the current virtual environment.
-pub(crate) fn detect_virtual_env() -> Result<Option<PathBuf>, Error> {
+pub(crate) fn detect_virtualenv() -> Result<Option<PathBuf>, Error> {
+    let from_env = virtualenv_from_env()?;
+    if from_env.is_some() {
+        return Ok(from_env);
+    }
+    virtualenv_from_working_dir()
+}
+
+/// Locate an active virtual environment by inspecting environment variables.
+///
+/// Supports `VIRTUAL_ENV` and `CONDA_PREFIX`.
+pub(crate) fn virtualenv_from_env() -> Result<Option<PathBuf>, Error> {
     if let Some(dir) = env::var_os("VIRTUAL_ENV").filter(|value| !value.is_empty()) {
         info!(
             "Found a virtualenv through VIRTUAL_ENV at: {}",
@@ -142,6 +153,7 @@ pub(crate) fn detect_virtual_env() -> Result<Option<PathBuf>, Error> {
         );
         return Ok(Some(PathBuf::from(dir)));
     }
+
     if let Some(dir) = env::var_os("CONDA_PREFIX").filter(|value| !value.is_empty()) {
         info!(
             "Found a virtualenv through CONDA_PREFIX at: {}",
@@ -150,7 +162,13 @@ pub(crate) fn detect_virtual_env() -> Result<Option<PathBuf>, Error> {
         return Ok(Some(PathBuf::from(dir)));
     }
 
-    // Search for a `.venv` directory in the current or any parent directory.
+    Ok(None)
+}
+
+/// Locate a virtual environment by searching the file system.
+///
+/// Finds a `.venv` directory in the current or any parent directory.
+pub(crate) fn virtualenv_from_working_dir() -> Result<Option<PathBuf>, Error> {
     let current_dir = env::current_dir().expect("Failed to detect current directory");
     for dir in current_dir.ancestors() {
         let dot_venv = dir.join(".venv");

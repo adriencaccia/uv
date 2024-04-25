@@ -12,6 +12,7 @@ use std::io;
 use std::path::PathBuf;
 use std::process::ExitStatus;
 
+use request::PythonInterpreterError;
 use thiserror::Error;
 
 pub use crate::environment::cfg::PyVenvConfiguration;
@@ -27,6 +28,7 @@ mod find_python;
 mod interpreter;
 pub mod managed;
 mod python_version;
+mod request;
 pub mod selectors;
 
 #[derive(Debug, Error)]

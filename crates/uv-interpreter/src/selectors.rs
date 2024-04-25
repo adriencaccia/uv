@@ -4,6 +4,8 @@ use std::{
 };
 use thiserror::Error;
 
+
+
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum ImplementationName {
     Cpython,
@@ -63,6 +65,11 @@ pub enum PythonSelectorError {
 }
 
 impl ImplementationName {
+    pub(crate) fn iter() -> impl Iterator<Item = &'static ImplementationName> {
+        static NAMES: &[ImplementationName] = &[ImplementationName::Cpython];
+        NAMES.iter()
+    }
+
     pub fn as_str(&self) -> &str {
         match self {
             Self::Cpython => "cpython",
@@ -74,7 +81,7 @@ impl FromStr for ImplementationName {
     type Err = PythonSelectorError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.to_ascii_lowercase().as_str() {
             "cpython" => Ok(Self::Cpython),
             _ => Err(PythonSelectorError::ImplementationNotSupported(
                 s.to_string(),

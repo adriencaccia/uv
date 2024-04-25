@@ -2,14 +2,16 @@ use std::borrow::Cow;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use tracing::{debug, instrument};
 
 use uv_cache::Cache;
 use uv_warnings::warn_user_once;
 
-use crate::environment::python_environment::{detect_python_executable, detect_virtual_env};
+use crate::environment::python_environment::{detect_python_executable, detect_virtualenv};
 use crate::interpreter::InterpreterInfoError;
+use crate::request::{PythonInterpreterRequest, PythonVersionRequest};
 use crate::PythonVersion;
 use crate::{Error, Interpreter};
 
@@ -28,22 +30,16 @@ use crate::{Error, Interpreter};
 #[instrument(skip_all, fields(%request))]
 pub fn find_requested_python(request: &str, cache: &Cache) -> Result<Option<Interpreter>, Error> {
     debug!("Starting interpreter discovery for Python @ `{request}`");
-    let versions = request
-        .splitn(3, '.')
-        .map(str::parse::<u8>)
-        .collect::<Result<Vec<_>, _>>();
-    if let Ok(versions) = versions {
+    // Try new interpreter lookup first
+    let new_request = PythonInterpreterRequest::parse(request);
+    if let Ok(Some(result)) = new_request.find(cache) {
+        return Ok(Some(result.into_interpreteter()));
+    }
+
+    // But fallback to the old one if something goes wrong
+    if let Ok(version_request) = PythonVersionRequest::from_str(request) {
         // `-p 3.10` or `-p 3.10.1`
-        let selector = match versions.as_slice() {
-            [requested_major] => PythonVersionSelector::Major(*requested_major),
-            [major, minor] => PythonVersionSelector::MajorMinor(*major, *minor),
-            [major, minor, requested_patch] => {
-                PythonVersionSelector::MajorMinorPatch(*major, *minor, *requested_patch)
-            }
-            // SAFETY: Guaranteed by the Ok(versions) guard
-            _ => unreachable!(),
-        };
-        let interpreter = find_python(selector, cache)?;
+        let interpreter = find_python(version_request, cache)?;
         interpreter
             .as_ref()
             .inspect(|inner| warn_on_unsupported_python(inner));
@@ -104,7 +100,7 @@ pub fn find_default_python(cache: &Cache) -> Result<Interpreter, Error> {
 
 /// Same as [`find_default_python`] but returns `None` if no python is found instead of returning an `Err`.
 pub(crate) fn try_find_default_python(cache: &Cache) -> Result<Option<Interpreter>, Error> {
-    find_python(PythonVersionSelector::Default, cache)
+    find_python(PythonVersionRequest::Default, cache)
 }
 
 /// Find a Python version matching `selector`.
@@ -121,7 +117,7 @@ pub(crate) fn try_find_default_python(cache: &Cache) -> Result<Option<Interprete
 ///
 /// (Windows): Filter out the Windows store shim (Enabled in Settings/Apps/Advanced app settings/App execution aliases).
 fn find_python(
-    selector: PythonVersionSelector,
+    selector: PythonVersionRequest,
     cache: &Cache,
 ) -> Result<Option<Interpreter>, Error> {
     #[allow(non_snake_case)]
@@ -324,19 +320,19 @@ impl PythonInstallation {
     /// Selects the interpreter if it matches the selector (version specification).
     fn select(
         self,
-        selector: PythonVersionSelector,
+        selector: PythonVersionRequest,
         cache: &Cache,
     ) -> Result<Option<Interpreter>, Error> {
         let selected = match selector {
-            PythonVersionSelector::Default => true,
+            PythonVersionRequest::Default => true,
 
-            PythonVersionSelector::Major(major) => self.major() == major,
+            PythonVersionRequest::Major(major) => self.major() == major,
 
-            PythonVersionSelector::MajorMinor(major, minor) => {
+            PythonVersionRequest::MajorMinor(major, minor) => {
                 self.major() == major && self.minor() == minor
             }
 
-            PythonVersionSelector::MajorMinorPatch(major, minor, requested_patch) => {
+            PythonVersionRequest::MajorMinorPatch(major, minor, requested_patch) => {
                 let interpreter = self.into_interpreter(cache)?;
                 return Ok(
                     if major == interpreter.python_major()
@@ -364,61 +360,6 @@ impl PythonInstallation {
                 executable_path, ..
             }) => Interpreter::query(executable_path, cache),
             Self::Interpreter(interpreter) => Ok(interpreter),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-enum PythonVersionSelector {
-    Default,
-    Major(u8),
-    MajorMinor(u8, u8),
-    MajorMinorPatch(u8, u8, u8),
-}
-
-impl PythonVersionSelector {
-    fn possible_names(self) -> [Option<Cow<'static, str>>; 4] {
-        let (python, python3, extension) = if cfg!(windows) {
-            (
-                Cow::Borrowed("python.exe"),
-                Cow::Borrowed("python3.exe"),
-                ".exe",
-            )
-        } else {
-            (Cow::Borrowed("python"), Cow::Borrowed("python3"), "")
-        };
-
-        match self {
-            Self::Default => [Some(python3), Some(python), None, None],
-            Self::Major(major) => [
-                Some(Cow::Owned(format!("python{major}{extension}"))),
-                Some(python),
-                None,
-                None,
-            ],
-            Self::MajorMinor(major, minor) => [
-                Some(Cow::Owned(format!("python{major}.{minor}{extension}"))),
-                Some(Cow::Owned(format!("python{major}{extension}"))),
-                Some(python),
-                None,
-            ],
-            Self::MajorMinorPatch(major, minor, patch) => [
-                Some(Cow::Owned(format!(
-                    "python{major}.{minor}.{patch}{extension}",
-                ))),
-                Some(Cow::Owned(format!("python{major}.{minor}{extension}"))),
-                Some(Cow::Owned(format!("python{major}{extension}"))),
-                Some(python),
-            ],
-        }
-    }
-
-    fn major(self) -> Option<u8> {
-        match self {
-            Self::Default => None,
-            Self::Major(major) => Some(major),
-            Self::MajorMinor(major, _) => Some(major),
-            Self::MajorMinorPatch(major, _, _) => Some(major),
         }
     }
 }
@@ -518,7 +459,7 @@ fn find_version(
 
     // Check if the venv Python matches.
     if !system {
-        if let Some(venv) = detect_virtual_env()? {
+        if let Some(venv) = detect_virtualenv()? {
             let executable = detect_python_executable(venv);
             let interpreter = Interpreter::query(executable, cache)?;
 
