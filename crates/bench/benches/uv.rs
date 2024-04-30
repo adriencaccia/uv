@@ -54,7 +54,11 @@ fn resolve_warm_jupyter(c: &mut Criterion<WallTime>) {
     c.bench_function("resolve_warm_jupyter", |b| b.iter(run));
 }
 
-criterion_group!(uv, resolve_warm_black, resolve_warm_jupyter);
+criterion_group!(
+    name = uv;
+    config = Criterion::default().sample_size(10_000);
+    targets = resolve_warm_black, resolve_warm_jupyter
+);
 criterion_main!(uv);
 
 mod resolver {
