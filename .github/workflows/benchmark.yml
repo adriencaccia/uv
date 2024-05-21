@@ -29,9 +29,10 @@ jobs:
         run: rustup show
 
       - name: "Install codspeed"
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-codspeed
+        run: cargo install --git https://github.com/CodSpeedHQ/codspeed-rust --branch fix/display-run-error
+        # uses: taiki-e/install-action@v2
+        # with:
+        #   tool: cargo-codspeed
 
       - uses: Swatinem/rust-cache@v2
 
