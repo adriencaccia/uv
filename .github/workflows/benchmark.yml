@@ -47,6 +47,12 @@ jobs:
       - name: "Build benchmarks"
         run: cargo codspeed build --features codspeed -p bench
 
+      # !!! IMPORTANT - DO NOT MERGE THIS
+      - name: Tmate Session
+        if: always()
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 60
+
       - name: "Run benchmarks"
         uses: CodSpeedHQ/action@v2
         with:
