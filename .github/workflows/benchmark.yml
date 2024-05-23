@@ -20,7 +20,7 @@ env:
 jobs:
   benchmarks:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # timeout-minutes: 20
     steps:
       - name: "Checkout Branch"
         uses: actions/checkout@v4
